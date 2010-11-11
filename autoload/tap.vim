@@ -1,15 +1,32 @@
-function! tap#parse()
-    0
-    let b:tap_result = {}
-    while search('^not ok \d\+', 'W') > 0
-        echo matchlist(getline('.'), '^not ok \v(\d+) - (.+)$')
-    endwhile
-    0
+function! tap#parse(output)
+    let result = { 'raw': a:output, 'failed': {} }
+    for line in split(a:output, "\n")
+        let m = matchlist(line, '^not ok \v(\d+) - (.+)')
+        if len(m)
+            let result.failed[m[1]] = { 'name': m[2] }
+        endif
+    endfor
+    return result
 endfunction
 
-function! tap#run (...)
-    let file = a:0 ? a:1 : expand('%')
-    let command = 'perl ' . file
+function! tap#run (command, file)
+    "put =a:file . ' ... '
+    put =a:file . ' ' . repeat('.', (len(a:file) / 16 + 1) * 16 + 3 - len(a:file)) . ' '
+    normal! zt
+    redraw
+    let result = tap#parse(system(a:command))
+    put =result.raw
+    normal! o
+
+    if len(keys(result.failed))
+        normal! AFAIL ---
+    else
+        normal! APASS ---
+    end
+endfunction
+
+function! tap#prove (...)
+    let files = a:0 ? split(glob(a:1), "\0") : [ expand('%') ]
 
     new
     set buftype=nofile
@@ -18,11 +35,12 @@ function! tap#run (...)
     syntax match tapNG      /^\(\s\{4}\)*not ok /he=e-1 nextgroup=tapNr
     syntax match tapPlan    /^\(\s\{4}\)*[0-9]\+\.\.[0-9]\+$/
     syntax match tapNr      /[0-9]\+/ contained
-    syntax match tapPASS    /^PASS\>/
-    syntax match tapFAIL    /^FAIL\>/
+    syntax match tapPASS    /^PASS\>/ contained
+    syntax match tapFAIL    /^FAIL\>/ contained
     
-    syntax region tapFold start=/\.\.\. $/ matchgroup=tapFoldDelim end=/^\(PASS\|FAIL\)---$/ transparent fold
+    syntax region tapFold start=/\.\.\. $/ matchgroup=tapFoldDelim end=/ ---$/ transparent fold contains=tapOK,tapNG,tapPlan,tapComment,tapPASS,tapFAIL
     setlocal foldmethod=syntax
+    setlocal foldtext=getline(v:foldstart).getline(v:foldend)
 
     autocmd BufHidden <buffer> bwipeout
 
@@ -35,13 +53,12 @@ function! tap#run (...)
     highlight link tapPlan    Number
     highlight link tapFoldDelim Ignore
 
-    execute "normal! a\<C-R>=file\<CR> ... "
-    redraw
-    silent! execute 'read!' command
-    normal! o---
+    for file in files
+        call tap#run('perl -Ilib ' . file, file)
+        syntax sync fromstart
+    endfor
 
+    0d
     setlocal nomodifiable
-    syntax sync fromstart
-
-    call tap#parse()
+    " %foldopen!
 endfunction
