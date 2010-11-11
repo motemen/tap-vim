@@ -9,7 +9,7 @@ endfunction
 
 function! tap#run (...)
     let file = a:0 ? a:1 : expand('%')
-    let command = 'perl ' . file . ' 2>/dev/null'
+    let command = 'perl ' . file
 
     new
     set buftype=nofile
@@ -18,15 +18,18 @@ function! tap#run (...)
     syntax match tapNG      /^\(\s\{4}\)*not ok /he=e-1 nextgroup=tapNr
     syntax match tapPlan    /^\(\s\{4}\)*[0-9]\+\.\.[0-9]\+$/
     syntax match tapNr      /[0-9]\+/ contained
-    " syntax match tapAllOK   /^All tests successful\.$/
+    syntax match tapPASS    /^PASS\>/
+    syntax match tapFAIL    /^FAIL\>/
     
-    syntax region tapFold start=/\.\.\. $/ matchgroup=tapFoldDelim end=/^---$/ transparent fold
+    syntax region tapFold start=/\.\.\. $/ matchgroup=tapFoldDelim end=/^\(PASS\|FAIL\)---$/ transparent fold
     setlocal foldmethod=syntax
 
     autocmd BufHidden <buffer> bwipeout
 
     highlight tapOK      ctermfg=Green ctermbg=Black
     highlight tapNG      ctermfg=Red   ctermbg=Black
+    highlight tapPASS    ctermfg=Black ctermbg=Green
+    highlight tapFAIL    ctermfg=Black ctermbg=Red
     highlight link tapComment Comment
     highlight link tapNr      Number
     highlight link tapPlan    Number
