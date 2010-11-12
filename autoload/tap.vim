@@ -88,6 +88,6 @@ function! tap#prove (...)
     endfor
 
     setlocal nomodifiable
-    folddoclosed silent! /^FAIL ---$/normal! za
+    silent! global/^FAIL ---$/normal! za
     0
 endfunction
