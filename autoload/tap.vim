@@ -1,22 +1,65 @@
 function! tap#parse (output)
-    let result = { 'raw': a:output, 'failed': {}, 'messages': [] }
+    let result = { 'raw': a:output, 'tests': [] }
+
+    let last_type = ''
     for line in split(a:output, "\n")
-        let m = matchlist(line, '^not ok \v(\d+)%( - ([^#]+))=%(.*# TODO)@!')
-        if len(m)
-            let result.failed[m[1]] = { 'name': m[2] }
+        let res = tap#parse_line(line)
+
+        if res.type == 'test'
+            call add(result.tests, res)
+        elseif res.type == 'comment' && res.comment =~ '^ \{3}' && last_type == 'test'
+            " Test::Builder diag
+
+            if !exists('result.tests[-1].builder_diag')
+                let result.tests[-1].builder_diag = ''
+            endif
+
+            let result.tests[-1].builder_diag .= ' ' . strpart(res.comment, 3)
+
+            continue " do not set last_type
         endif
+
+        let last_type = res.type
     endfor
 
-    let pos = -1
-    let pat = 'not ok \d\+\%( - \([^#]\+\)\)\=\n#\s\{3}\(Failed test.\{-}\)\= at \(\S\+\) line \(\d\+\)\.'
-    while 1
-        let pos = match(a:output, pat, pos + 1)
-        if pos == -1 | break | endif
-        let [ name, message, file, line ] = matchlist(a:output, pat, pos)[1:4]
+    return result
+endfunction
 
-        let message = substitute(message, '\n#\s*', '', 'g')
-        call add(result.messages, { 'name': name, 'message': message, 'file': file, 'line': line })
-    endwhile
+function! tap#parse_line (line)
+    let [ indent, line ] = matchlist(a:line, '^\v(\s*)(.*)$')[1:2]
+
+    let m_plan    = matchlist(line, '^\v(\d+)\.\.(\d+)$')
+    let m_test    = matchlist(line, '^\v(not )?ok (\d+)%( - (.*))?%(# (.*))?')
+    let m_comment = matchlist(line, '^\v#(.*)')
+
+    let result = {}
+
+    if len(m_plan)
+        let [ s, e ] = m_plan[1:2]
+
+        let result.type = 'plan'
+        let result.tests_planned = e
+
+    elseif len(m_test)
+        let [ failed, number, description, pragma ] = m_test[1:4]
+        let is_todo = pragma =~ '\<TODO\>'
+        let is_skip = pragma =~ '\<skip\>'
+
+        let result.type = 'test'
+        let result.number = number
+        let result.description = description
+        let result.failed = len(failed) && !is_todo
+
+    elseif len(m_comment)
+        let [ comment ] = m_comment[1:1]
+
+        let result.type = 'comment'
+        let result.comment = comment
+    
+    else
+        let result.type = 'unknown'
+
+    endif
 
     return result
 endfunction
@@ -27,17 +70,24 @@ function! tap#run (command, file)
 
     redraw
     let result = tap#parse(system(a:command))
+    let failed = 0
     if v:shell_error != 0
-        let result.failed[-1] = 1 " TODO
+        let failed = 1
     endif
     put =result.raw
     normal! o
 
-    for m in result.messages
-        call setqflist([ { 'filename': m.file, 'lnum': m.line, 'text': m.message } ], 'a')
+    for t in result.tests
+        if t.failed && exists('t.builder_diag')
+            let failed = 1
+            let m = matchlist(t.builder_diag, '\vat (\f+) line (\d+)\.')
+            if len(m)
+                call setqflist([ { 'filename': m[1], 'lnum': m[2], 'text': t.builder_diag } ], 'a')
+            endif
+        endif
     endfor
 
-    if len(keys(result.failed))
+    if failed
         normal! AFAIL ---
     else
         normal! APASS ---
@@ -90,7 +140,7 @@ function! tap#prove (...)
             execute winnr 'wincmd' 'w'
         endif
         set modifiable
-        %d
+        %delete
     else
         new
         setlocal buftype=nofile
