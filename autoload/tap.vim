@@ -9,6 +9,7 @@ function! tap#parse (output)
             call add(result.tests, res)
         elseif res.type == 'comment' && res.comment =~ '^ \{3}' && last_type == 'test'
             " Test::Builder diag
+            " TODO further diag
 
             if !exists('result.tests[-1].builder_diag')
                 let result.tests[-1].builder_diag = ''
