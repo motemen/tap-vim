@@ -1,11 +1,13 @@
 function! tap#parse (output)
-    let result = { 'raw': a:output, 'tests': [] }
+    let result = { 'raw': a:output, 'tests': [], 'tests_planned': -1 }
 
     let last_type = ''
     for line in split(a:output, "\n")
         let res = tap#parse_line(line)
 
-        if res.type == 'test'
+        if res.type == 'plan'
+            let result.tests_planned = res.tests_planned
+        elseif res.type == 'test'
             call add(result.tests, res)
         elseif res.type == 'comment' && res.comment =~ '^ \{3}' && last_type == 'test'
             " only for Test::Builder diag
@@ -28,7 +30,7 @@ endfunction
 function! tap#parse_line (line)
     let [ indent, line ] = matchlist(a:line, '^\v(\s*)(.*)$')[1:2]
 
-    let m_plan    = matchlist(line, '^\v(\d+)\.\.(\d+)$')
+    let m_plan    = matchlist(line, '^\v(\d+)\.\.(\d+)') " TODO comment
     let m_test    = matchlist(line, '^\v(not )?ok (\d+)%( - (.*))?%(# (.*))?')
     let m_comment = matchlist(line, '^\v#(.*)')
 
@@ -87,7 +89,9 @@ function! tap#run (command, file)
         endif
     endfor
 
-    if failed
+    if result.tests_planned == 0
+        normal! ASKIP ---
+    elseif failed
         normal! AFAIL ---
     else
         normal! APASS ---
@@ -96,35 +100,40 @@ function! tap#run (command, file)
 endfunction
 
 function! tap#setup_highlights ()
-    syntax match tapNG   /^\(\s\{4}\)*not ok \(.\{-}# TODO\)\@!/he=e-1 nextgroup=tapNr
-    syntax match tapOK   /^\(\s\{4}\)*ok \(.\{-}# \(TODO\|skip\)\)\@!/he=e-1 nextgroup=tapNr
+    syntax match tapTestOK   /^\(\s\{4}\)*ok \(.\{-}# \(TODO\|skip\)\)\@!/he=e-1 nextgroup=tapNr
+    syntax match tapTestNG   /^\(\s\{4}\)*not ok \(.\{-}# TODO\)\@!/he=e-1 nextgroup=tapNr
 
-    syntax match tapTODO /^\(\s\{4}\)*\(not \)\=ok \ze.\{-}# TODO /he=e-1 nextgroup=tapNr
-    syntax match tapSkip /^\(\s\{4}\)*ok \ze.\{-}# skip /he=e-1 nextgroup=tapNr
+    syntax match tapTestTODO /^\(\s\{4}\)*\(not \)\=ok \ze.\{-}# TODO /he=e-1 nextgroup=tapNr
+    syntax match tapTestSkip /^\(\s\{4}\)*ok \ze.\{-}# skip /he=e-1 nextgroup=tapNr
 
-    syntax match tapPlan    /^\(\s\{4}\)*[0-9]\+\.\.[0-9]\+$/
+    syntax match tapPlan    /^\(\s\{4}\)*[0-9]\+\.\.[0-9]\+/
     syntax match tapNr      /[0-9]\+/ contained
-    syntax match tapPASS    /^PASS\>/ contained
-    syntax match tapFAIL    /^FAIL\>/ contained
-    syntax match tapComment /#.*/ contains=tapCommentSkip,tapCommentTODO
-    syntax match tapCommentSkip    /# skip /hs=s+1 contained
-    syntax match tapCommentTODO    /# TODO /hs=s+1 contained
-    
-    syntax region tapFold start=/\.\.\. $/ matchgroup=tapFoldDelim end=/ ---\n\n/ transparent fold contains=tapOK,tapNG,tapPlan,tapComment,tapPASS,tapFAIL,tapTODO,tapSkip
 
-    highlight tapOK      ctermfg=Green ctermbg=Black
-    highlight tapNG      ctermfg=Red   ctermbg=Black
-    highlight tapPASS    ctermfg=Black ctermbg=Green
-    highlight tapFAIL    ctermfg=Black ctermbg=Red
-    highlight tapTODO    ctermfg=DarkBlue ctermbg=Black
-    highlight tapSkip    ctermfg=DarkBlue ctermbg=Black
+    syntax match tapComment     /#.*/ contains=tapDirectiveSkip,tapDirectiveTODO
+    syntax match tapDirectiveSkip /\c# SKIP /hs=s+1 contained
+    syntax match tapDirectiveTODO /\c# TODO /hs=s+1 contained
+
+    syntax match tapResultPASS    /^PASS\>/ contained
+    syntax match tapResultFAIL    /^FAIL\>/ contained
+    syntax match tapResultSKIP    /^SKIP\>/ contained
+    
+    syntax region tapFold start=/\.\.\. $/ matchgroup=tapFoldDelim end=/ ---\n\n/ transparent fold contains=tapTestOK,tapTestNG,tapTestTODO,tapTestSkip,tapPlan,tapComment,tapResultPASS,tapResultFAIL,tapResultSKIP
+
+    highlight tapTestOK   ctermfg=Green ctermbg=Black
+    highlight tapTestNG   ctermfg=Red   ctermbg=Black
+    highlight tapResultPASS ctermfg=Black ctermbg=Green
+    highlight tapResultFAIL ctermfg=Black ctermbg=Red
+    highlight tapResultSKIP ctermfg=Black ctermbg=Yellow
+
+    highlight tapTestTODO ctermfg=DarkBlue ctermbg=Black
+    highlight tapTestSkip ctermfg=DarkBlue ctermbg=Black
 
     highlight link tapNr        Number
     highlight link tapPlan      Number
     highlight link tapFoldDelim Ignore
     highlight link tapComment   Comment
-    highlight link tapCommentSkip      Statement
-    highlight link tapCommentTODO      Statement
+    highlight link tapDirectiveSkip      Statement
+    highlight link tapDirectiveTODO      Statement
 endfunction
 
 function! tap#prove (...)
