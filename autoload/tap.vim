@@ -8,8 +8,7 @@ function! tap#parse (output)
         if res.type == 'test'
             call add(result.tests, res)
         elseif res.type == 'comment' && res.comment =~ '^ \{3}' && last_type == 'test'
-            " Test::Builder diag
-            " TODO further diag
+            " only for Test::Builder diag
 
             if !exists('result.tests[-1].builder_diag')
                 let result.tests[-1].builder_diag = ''
@@ -134,13 +133,19 @@ function! tap#prove (...)
 
     let bufname = 'prove ' . arg
     if bufexists(bufname)
+        " reuse buffer
+        if getbufvar(bufname, '&buftype') != 'nofile'
+            throw 'got wrong buffer'
+        endif
+
         let winnr = bufwinnr(bufname)
         if winnr == -1
             execute 'sbuffer' bufname
         else
             execute winnr 'wincmd' 'w'
         endif
-        set modifiable
+
+        setlocal modifiable
         %delete
     else
         new
@@ -153,8 +158,17 @@ function! tap#prove (...)
 
     call setqflist([])
 
+    " TODO BAIL_OUT
     for file in files
-        call tap#run('perl -Ilib ' . file, file) " TODO option
+        let command = 'perl -Ilib ' " TODO option
+
+        let line = join(readfile(file, '', 1))
+        let opt_taint = matchstr(line, '^#!.*\<perl.*\s\zs-[Tt]\+')
+        if len(opt_taint)
+            let command .= ' ' . opt_taint
+        endif
+
+        call tap#run(command . ' ' . file, file)
         syntax sync fromstart
     endfor
     " normal! o
