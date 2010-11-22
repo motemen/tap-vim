@@ -1,5 +1,5 @@
 function! tap#parse (output)
-    let result = { 'raw': a:output, 'tests': [], 'tests_planned': -1 }
+    let result = { 'raw': a:output, 'tests': [], 'tests_planned': -1, 'bailout': 0 }
 
     let last_type = ''
     for line in split(a:output, "\n")
@@ -19,6 +19,8 @@ function! tap#parse (output)
             let result.tests[-1].builder_diag .= ' ' . strpart(res.comment, 3)
 
             continue " do not set last_type
+        elseif res.type == 'bailout'
+            let result.bailout = 1
         endif
 
         let last_type = res.type
@@ -33,6 +35,7 @@ function! tap#parse_line (line)
     let m_plan    = matchlist(line, '^\v(\d+)\.\.(\d+)') " TODO comment
     let m_test    = matchlist(line, '^\v(not )?ok (\d+)%( - (.*))?%(# (.*))?')
     let m_comment = matchlist(line, '^\v#(.*)')
+    let m_bailout = matchlist(line, '^\vBail out!\s+(.*)')
 
     let result = {}
 
@@ -57,7 +60,13 @@ function! tap#parse_line (line)
 
         let result.type = 'comment'
         let result.comment = comment
-    
+
+    elseif len(m_bailout)
+        let [ reason ] = m_bailout[1:1]
+
+        let result.type = 'bailout'
+        let result.reason = reason
+
     else
         let result.type = 'unknown'
 
@@ -97,6 +106,8 @@ function! tap#run (command, file)
         normal! APASS ---
     end
     normal! o
+
+    return result
 endfunction
 
 function! tap#setup_highlights ()
@@ -107,6 +118,7 @@ function! tap#setup_highlights ()
     syntax match tapTestSkip /^\(\s\{4}\)*ok \ze.\{-}# skip /he=e-1 nextgroup=tapNr
 
     syntax match tapPlan    /^\(\s\{4}\)*[0-9]\+\.\.[0-9]\+/
+    syntax match tapBailout /^Bail out!.*/
     syntax match tapNr      /[0-9]\+/ contained
 
     syntax match tapComment     /#.*/ contains=tapDirectiveSkip,tapDirectiveTODO
@@ -117,7 +129,7 @@ function! tap#setup_highlights ()
     syntax match tapResultFAIL    /^FAIL\>/ contained
     syntax match tapResultSKIP    /^SKIP\>/ contained
     
-    syntax region tapFold start=/\.\.\. $/ matchgroup=tapFoldDelim end=/ ---\n\n/ transparent fold contains=tapTestOK,tapTestNG,tapTestTODO,tapTestSkip,tapPlan,tapComment,tapResultPASS,tapResultFAIL,tapResultSKIP
+    syntax region tapFold start=/\.\.\. $/ matchgroup=tapFoldDelim end=/ ---\n\n/ transparent fold contains=tapTestOK,tapTestNG,tapTestTODO,tapTestSkip,tapPlan,tapComment,tapResultPASS,tapResultFAIL,tapResultSKIP,tapBailout
 
     highlight tapTestOK   ctermfg=Green ctermbg=Black
     highlight tapTestNG   ctermfg=Red   ctermbg=Black
@@ -130,6 +142,7 @@ function! tap#setup_highlights ()
 
     highlight link tapNr        Number
     highlight link tapPlan      Number
+    highlight link tapBailout   Error
     highlight link tapFoldDelim Ignore
     highlight link tapComment   Comment
     highlight link tapDirectiveSkip      Statement
@@ -177,8 +190,12 @@ function! tap#prove (...)
             let command .= ' ' . opt_taint
         endif
 
-        call tap#run(command . ' ' . file, file)
+        let result = tap#run(command . ' ' . file, file)
         syntax sync fromstart
+
+        if result.bailout
+            break
+        endif
     endfor
     " normal! o
 
