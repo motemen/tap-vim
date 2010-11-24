@@ -33,7 +33,7 @@ function! tap#parse_line (line)
     let [ indent, line ] = matchlist(a:line, '^\v(\s*)(.*)$')[1:2]
 
     let m_plan    = matchlist(line, '^\v(\d+)\.\.(\d+)') " TODO comment
-    let m_test    = matchlist(line, '^\v(not )?ok (\d+)%( - (.*))?%(# (.*))?')
+    let m_test    = matchlist(line, '^\v(not )?ok (\d+)%( - ([^#]*))?%(# (.*))?')
     let m_comment = matchlist(line, '^\v#(.*)')
     let m_bailout = matchlist(line, '^\vBail out!\s+(.*)')
 
@@ -121,9 +121,10 @@ function! tap#setup_highlights ()
     syntax match tapBailout /^Bail out!.*/
     syntax match tapNr      /[0-9]\+/ contained
 
-    syntax match tapComment     /#.*/ contains=tapDirectiveSkip,tapDirectiveTODO
+    syntax match tapComment     /#.*/ contains=tapDirectiveTODOAndSkip,tapDirectiveSkip,tapDirectiveTODO
     syntax match tapDirectiveSkip /\c# SKIP /hs=s+1 contained
     syntax match tapDirectiveTODO /\c# TODO /hs=s+1 contained
+    syntax match tapDirectiveTODOAndSkip /\c# TODO & SKIP /hs=s+1 contained
 
     syntax match tapResultPASS    /^PASS\>/ contained
     syntax match tapResultFAIL    /^FAIL\>/ contained
@@ -145,8 +146,9 @@ function! tap#setup_highlights ()
     highlight link tapBailout   Error
     highlight link tapFoldDelim Ignore
     highlight link tapComment   Comment
-    highlight link tapDirectiveSkip      Statement
-    highlight link tapDirectiveTODO      Statement
+    highlight link tapDirectiveSkip        Statement
+    highlight link tapDirectiveTODO        Statement
+    highlight link tapDirectiveTODOAndSkip Statement
 endfunction
 
 function! tap#prove (...)
