@@ -1,4 +1,4 @@
 use strict;
 use Test::More;
 
-BAIL_OUT 'reason';
+BAIL_OUT 'blah blah';

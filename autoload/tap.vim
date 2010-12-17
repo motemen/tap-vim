@@ -1,36 +1,21 @@
+function! tap#init_parse_result ()
+    return { 'raw': '', 'tests': [], 'tests_planned': -1, 'bailout': 0 }
+endfunction
+
 function! tap#parse (output)
-    let result = { 'raw': a:output, 'tests': [], 'tests_planned': -1, 'bailout': 0 }
+    let result = tap#init_parse_result()
 
-    let last_type = ''
-    for line in split(a:output, "\n")
-        let res = tap#parse_line(line)
-
-        if res.type == 'plan'
-            let result.tests_planned = res.tests_planned
-        elseif res.type == 'test'
-            call add(result.tests, res)
-        elseif res.type == 'comment' && res.comment =~ '^ \{3}' && last_type == 'test'
-            " only for Test::Builder diag
-
-            if !exists('result.tests[-1].builder_diag')
-                let result.tests[-1].builder_diag = ''
-            endif
-
-            let result.tests[-1].builder_diag .= ' ' . strpart(res.comment, 3)
-
-            continue " do not set last_type
-        elseif res.type == 'bailout'
-            let result.bailout = 1
-        endif
-
-        let last_type = res.type
+    for line in split(a:output, '\n')
+        call tap#parse_line(line, result)
     endfor
 
     return result
 endfunction
 
-function! tap#parse_line (line)
+function! tap#parse_line (line, total_result)
     let [ indent, line ] = matchlist(a:line, '^\v(\s*)(.*)$')[1:2]
+
+    let a:total_result.raw .= line . "\n"
 
     let m_plan    = matchlist(line, '^\v(\d+)\.\.(\d+)') " TODO comment
     let m_test    = matchlist(line, '^\v(not )?ok (\d+)%( - ([^#]*))?%(# (.*))?')
@@ -55,6 +40,10 @@ function! tap#parse_line (line)
         let result.description = description
         let result.failed = len(failed) && !is_todo
 
+        if result.failed
+            let a:total_result.failed = 1
+        endif
+
     elseif len(m_comment)
         let [ comment ] = m_comment[1:1]
 
@@ -72,6 +61,30 @@ function! tap#parse_line (line)
 
     endif
 
+    if !exists('a:total_result.last_type')
+        let a:total_result.last_type = ''
+    endif
+
+    if result.type == 'plan'
+        let a:total_result.tests_planned = result.tests_planned
+    elseif result.type == 'test'
+        call add(a:total_result.tests, result)
+    elseif result.type == 'comment' && result.comment =~ '^ \{3}' && a:total_result.last_type == 'test'
+        " only for Test::Builder diag
+
+        if !exists('a:total_result.tests[-1].builder_diag')
+            let a:total_result.tests[-1].builder_diag = ''
+        endif
+
+        let a:total_result.tests[-1].builder_diag .= ' ' . strpart(result.comment, 3)
+
+        return result " do not set a:total_result.last_type
+    elseif result.type == 'bailout'
+        let a:total_result.bailout = 1
+    endif
+
+    let a:total_result.last_type = result.type
+
     return result
 endfunction
 
@@ -80,12 +93,40 @@ function! tap#run (command, file)
                 \ repeat('.', (len(a:file) / 32 + 1) * 32 + 3 - len(a:file)) ''
 
     redraw
-    let result = tap#parse(system(a:command))
-    let failed = 0
-    if v:shell_error != 0
-        let failed = 1
+    let incremental = exists('g:tap#use_vimproc') && g:tap#use_vimproc
+    let b:tap_running = 1
+
+    if incremental
+        let result = tap#init_parse_result()
+        let p = vimproc#popen2(a:command)
+        let buf = ''
+        while !p.stdout.eof
+            let buf .= p.stdout.read()
+            let [lines, buf] = matchlist(buf, '^\(\_.\{-}\)\(\%(\n\@!.\)*\)$')[1:2]
+            for line in split(lines, '\n')
+                put =line
+                redraw
+                call tap#parse_line(line, result)
+            endfor
+        endwhile
+
+        while 1
+            let [s, exit_code] = p.waitpid()
+            if s == 'exit'
+                break
+            endif
+        endwhile
+    else
+        let result = tap#parse(system(a:command))
+        let exit_code = v:shell_error
     endif
-    put =result.raw
+
+    let failed = exit_code != 0 || get(result, 'failed', 0)
+
+    if !incremental
+        put =result.raw
+    endif
+
     normal! o
 
     for t in result.tests
@@ -97,6 +138,8 @@ function! tap#run (command, file)
             endif
         endif
     endfor
+
+    let b:tap_running = 0
 
     if result.tests_planned == 0
         normal! ASKIP ---
@@ -152,7 +195,7 @@ function! tap#setup_highlights ()
 endfunction
 
 function! tap#prove (...)
-    let arg = a:0 ? a:1 : '%'
+    let arg = a:0 ? a:1 : expand('%') =~ '\.t$' ? expand('%') : 't'
     let files = split(glob(isdirectory(arg) ? arg . '/**/*.t' : arg), "\0")
 
     let bufname = 'prove ' . arg
@@ -173,16 +216,18 @@ function! tap#prove (...)
         %delete
     else
         new
-        setlocal buftype=nofile
-        setlocal foldmethod=syntax foldtext=getline(v:foldstart).(v:foldend-1<=v:foldstart?'\ \ \ \ \ ':getline(v:foldend-1))
+        setlocal buftype=nofile filetype=tap-result
+        setlocal foldmethod=syntax foldtext=b:tap_running?getline(v:foldend-1):getline(v:foldstart).(v:foldend-1<=v:foldstart?'\ \ \ \ \ ':getline(v:foldend-1))
+        let b:tap_running = 0
+        let b:tap_test_target = files
         execute 'file' escape(bufname, ' *%\')
-        autocmd BufUnload <buffer> bwipeout
+        " autocmd BufUnload <buffer> bwipeout
         call tap#setup_highlights()
     endif
 
     call setqflist([])
+    normal! zM
 
-    " TODO BAIL_OUT
     for file in files
         let command = 'perl -Ilib ' " TODO option
 
@@ -205,3 +250,19 @@ function! tap#prove (...)
     0
     setlocal nomodifiable
 endfunction
+
+if exists('g:tap#develop') && g:tap#develop
+    augroup tap#develop
+        autocmd!
+        autocmd CursorHold *
+                    \ silent! delfunction tap#prove
+                    \ | augroup tap#develop
+                    \ |     execute 'autocmd!'
+                    \ | augroup END
+        autocmd CursorHoldI *
+                    \ silent! delfunction tap#prove
+                    \ | augroup tap#develop
+                    \ |     execute 'autocmd!'
+                    \ | augroup END
+    augroup END
+endif
