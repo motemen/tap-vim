@@ -29,6 +29,7 @@ function! tap#parse_line (line, total_result)
 
         let result.type = 'plan'
         let result.tests_planned = e
+        let a:total_result.tests_planned = result.tests_planned
 
     elseif len(m_test)
         let [ failed, number, description, pragma ] = m_test[1:4]
@@ -44,17 +45,33 @@ function! tap#parse_line (line, total_result)
             let a:total_result.failed = 1
         endif
 
+        call add(a:total_result.tests, result)
+
     elseif len(m_comment)
         let [ comment ] = m_comment[1:1]
 
         let result.type = 'comment'
         let result.comment = comment
 
+        if result.comment =~ '^ \{3}' && a:total_result.last_type == 'test'
+            " only for Test::Builder diag
+
+            if !exists('a:total_result.tests[-1].builder_diag')
+                let a:total_result.tests[-1].builder_diag = ''
+            endif
+
+            let a:total_result.tests[-1].builder_diag .= ' ' . strpart(result.comment, 3)
+
+            return result " do not set a:total_result.last_type
+        endif
+
     elseif len(m_bailout)
         let [ reason ] = m_bailout[1:1]
 
         let result.type = 'bailout'
         let result.reason = reason
+
+        let a:total_result.bailout = 1
 
     else
         let result.type = 'unknown'
@@ -63,24 +80,6 @@ function! tap#parse_line (line, total_result)
 
     if !exists('a:total_result.last_type')
         let a:total_result.last_type = ''
-    endif
-
-    if result.type == 'plan'
-        let a:total_result.tests_planned = result.tests_planned
-    elseif result.type == 'test'
-        call add(a:total_result.tests, result)
-    elseif result.type == 'comment' && result.comment =~ '^ \{3}' && a:total_result.last_type == 'test'
-        " only for Test::Builder diag
-
-        if !exists('a:total_result.tests[-1].builder_diag')
-            let a:total_result.tests[-1].builder_diag = ''
-        endif
-
-        let a:total_result.tests[-1].builder_diag .= ' ' . strpart(result.comment, 3)
-
-        return result " do not set a:total_result.last_type
-    elseif result.type == 'bailout'
-        let a:total_result.bailout = 1
     endif
 
     let a:total_result.last_type = result.type
