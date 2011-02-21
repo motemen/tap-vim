@@ -1,5 +1,5 @@
 function! tap#init_parse_result ()
-    return { 'raw': '', 'tests': [], 'tests_planned': -1, 'bailout': 0 }
+    return { 'raw': '', 'tests': [], 'other_errors': [], 'tests_planned': -1, 'bailout': 0 }
 endfunction
 
 function! tap#parse (output)
@@ -15,12 +15,13 @@ endfunction
 function! tap#parse_line (line, total_result)
     let [ indent, line ] = matchlist(a:line, '^\v(\s*)(.*)$')[1:2]
 
-    let a:total_result.raw .= line . "\n"
+    let a:total_result.raw .= indent . line . "\n"
 
     let m_plan    = matchlist(line, '^\v(\d+)\.\.(\d+)') " TODO comment
     let m_test    = matchlist(line, '^\v(not )?ok (\d+)%( - ([^#]*))?%(# (.*))?')
     let m_comment = matchlist(line, '^\v#(.*)')
     let m_bailout = matchlist(line, '^\vBail out!\s+(.*)')
+    let m_error   = matchlist(line, '^\v(.+) at (\f+) line (\d+)\.$')
 
     let result = {}
 
@@ -72,6 +73,13 @@ function! tap#parse_line (line, total_result)
         let result.reason = reason
 
         let a:total_result.bailout = 1
+
+    elseif len(m_error)
+        let [ message, file, line ] = m_error[1:3]
+
+        let result.type = 'other_error'
+        let error = { 'message': message, 'file': file, 'line': line }
+        call add(a:total_result.other_errors, error)
 
     else
         let result.type = 'unknown'
@@ -136,6 +144,10 @@ function! tap#run (command, file)
                 call setqflist([ { 'filename': m[1], 'lnum': m[2], 'text': t.builder_diag } ], 'a')
             endif
         endif
+    endfor
+
+    for e in result.other_errors
+        call setqflist([ { 'filename': e.file, 'lnum': e.line, 'text': printf('(when testing %s) %s', a:file, e.message) } ], 'a')
     endfor
 
     let b:tap_running = 0
