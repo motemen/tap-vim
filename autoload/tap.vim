@@ -209,6 +209,11 @@ function! tap#prove (...)
     let arg = a:0 ? a:1 : expand('%') =~ '\.t$' ? expand('%') : 't'
     let files = split(glob(isdirectory(arg) ? arg . '/**/*.t' : arg), "\0")
 
+    let command = 'perl -Ilib' " TODO option
+    if exists('b:tap_run_command')
+        let command = b:tap_run_command
+    end
+
     let bufname = 'prove ' . arg
     if bufexists(bufname)
         " reuse buffer
@@ -240,15 +245,10 @@ function! tap#prove (...)
     normal! zM
 
     for file in files
-        let command = 'perl -Ilib ' " TODO option
-
         let line = join(readfile(file, '', 1))
         let opt_taint = matchstr(line, '^#!.*\<perl.*\s\zs-[Tt]\+')
-        if len(opt_taint)
-            let command .= ' ' . opt_taint
-        endif
 
-        let result = tap#run(command . ' ' . file, file)
+        let result = tap#run(command . ' ' . (len(opt_taint) ? ' ' . opt_taint : '') . file, file)
         syntax sync fromstart
 
         if result.bailout
